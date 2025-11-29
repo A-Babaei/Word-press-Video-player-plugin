@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academy-Tech.ir Custom Video Player</title>
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Custom Video Player</h1>
+        <video id="player" playsinline controls data-poster="https://cdn.plyr.io/static/demo/View_From_A_Blue_Moon_Trailer-HD.jpg">
+            <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4" size="720">
+            <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4" size="1080">
+            <track kind="captions" label="English" srclang="en" src="data:text/vtt;base64,V0VCVlRUDQoNCjAwOjAxLjAwMCAtLT4gMDA6MDQuMDAwDQpUaGlzIGlzIGFuIEVuZ2xpc2ggc3VidGl0bGUuDQoNCjAwOjA1LjAwMCAtLT4gMDA6MDkuMDAwDQrYp9io2KfYr9iqINiq2YXYr9uM2LHYpyDZhtmJ2YXZitmE2KfZhiDYqtmF2K8uDQo=" default>
+            <track kind="captions" label="Persian" srclang="fa" src="data:text/vtt;base64,V0VCVlRUDQoNCjAwOjAxLjAwMCAtLT4gMDA6MDQuMDAwDQpUaGlzIGlzIGFuIEVuZ2xpc2ggc3VidGl0bGUuDQoNCjAwOjA1LjAwMCAtLT4gMDA6MDkuMDAwDQrYp9io2KfYr9iqINiq2YXYr9uM2LHYpyDZhtmJ2YXZitmE2KfZhiDYqtmF2K8uDQo=">
+        </video>
+    </div>
+
+    <script src="https://cdn.plyr.io/3.7.8/plyr.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const player = new Plyr('#player', {
+                settings: ['captions', 'quality', 'speed'],
+                quality: {
+                    default: 720,
+                    options: [1080, 720],
+                },
+                speed: {
+                    selected: 1,
+                    options: [0.5, 0.75, 1, 1.25, 1.5, 2],
+                },
+                captions: {
+                    active: true,
+                    language: 'en',
+                    update: true,
+                },
+                tooltips: {
+                    controls: true,
+                    seek: true,
+                },
+                previewThumbnails: {
+                    enabled: true,
+                    src: 'data:text/vtt;base64,V0VCVlRUDQoNCjAwOjAwLjAwMCAtLT4gMDA6MDUuMDAwDQpodHRwczovL3BsYWNlaG9sZC5jby8xNjB4OTAvMTExL2VlZS5wbmcmdGV4dD1UaHVtYi0xI3h5d2g9MCwwLDE2MCw5MA0KDQowMDowNS4wMDEgLS0+IDAwOjEwLjAwMA0KaHR0cHM6Ly9wbGFjZWhvbGQuY28vMTYweDkwLzIyMi9kZGQucG5nJnRleHQ9VGh1bWItMiN4eXdoPTAsMCwxNjAsOTANCg0KMDA6MTAuMDAxIC0tPiAwMDoxNS4wMDAKaHR0cHM6Ly9wbGFjZWhvbGQuY28vMTYweDkwLzMzMy9jY2MucG5nJnRleHQ9VGh1bWItMyN4eXdoPTAsMCwxNjAsOTANCg0KMDA6MTUuMDAxIC0tPiAwMDoyMC4wMDAKaHR0cHM6Ly9wbGFjZWhvbGQuY28vMTYweDkwLzQ0NC9iYmIucG5nJnRleHQ9VGh1bWItNCN4eXdoPTAsMCwxNjAsOTANCg=='
+                }
+            });
+        });
+    </script>
+</body>
+</html>
