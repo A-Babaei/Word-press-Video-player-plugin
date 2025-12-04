@@ -2,6 +2,11 @@
 
 Detects and prevents users from sharing login credentials.
 
+## Changelog
+
+### 1.1 (2025-12-04)
+* Fixed a fatal error on activation caused by a syntax error.
+
 ## Installation
 
 1.  Download the `login-security-squad.zip` file.
