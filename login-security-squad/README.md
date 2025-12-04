@@ -2,6 +2,20 @@
 
 Detects and prevents users from sharing login credentials.
 
+## Changelog
+
+### 1.1 (2025-12-04)
+* Fixed a fatal error on activation caused by a syntax error.
+* Added concurrent session limiting.
+* Added IP and device fingerprinting.
+* Added OTP verification for suspicious logins.
+* Added usage pattern monitoring.
+* Added a dashboard widget for flagged accounts.
+* Added "Warn," "Suspend," and "Ban" actions to the users list.
+* Added a meta box to protect content.
+* Added a toggle for geolocation flagging.
+* Encrypted sensitive data in the database.
+
 ## Installation
 
 1.  Download the `login-security-squad.zip` file.
