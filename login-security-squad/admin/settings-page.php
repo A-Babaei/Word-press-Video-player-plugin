@@ -48,6 +48,11 @@ function lss_handle_manual_blocking() {
         }
 
         if (current_user_can('edit_user', $user->ID) && get_current_user_id() !== $user->ID) {
+            if (lss_is_user_role_exempt($user->ID)) {
+                add_settings_error('lss_messages', 'lss_error', __('This user has an exempted role and cannot be banned.', 'login-security-squad'), 'error');
+                return;
+            }
+
             if ($action === 'block') {
                 update_user_meta($user->ID, '_lss_is_banned', true);
                 wp_update_user(['ID' => $user->ID, 'role' => 'no-role']);
@@ -87,6 +92,11 @@ function lss_handle_log_actions() {
         }
 
         if ($action === 'ban_user') {
+            if (lss_is_user_role_exempt($user_id)) {
+                $redirect_url = add_query_arg('lss_message', 'exempt_role', wp_get_referer());
+                wp_safe_redirect($redirect_url);
+                exit;
+            }
             update_user_meta($user_id, '_lss_is_banned', true);
             wp_update_user(['ID' => $user_id, 'role' => 'no-role']);
             $redirect_url = add_query_arg('lss_message', 'user_banned', wp_get_referer());
@@ -116,6 +126,10 @@ function lss_display_log_action_notices() {
                 break;
             case 'user_unbanned':
                 $message = __('User has been unbanned. Their role has been restored and a password reset link has been sent.', 'login-security-squad');
+                break;
+            case 'exempt_role':
+                $message = __('This user has an exempted role and cannot be banned.', 'login-security-squad');
+                $type = 'error';
                 break;
         }
         if ($message) {
@@ -149,6 +163,7 @@ function lss_register_settings() {
     register_setting('lss_settings_group', 'lss_settings', 'lss_settings_sanitize');
 
     $sections = [
+        'lss_section_general' => __('General Settings', 'login-security-squad'),
         'lss_section_session' => __('Concurrent Session Management', 'login-security-squad'),
         'lss_section_ip' => __('IP & Device Fingerprinting', 'login-security-squad'),
         'lss_section_otp' => __('Email OTP Verification', 'login-security-squad'),
@@ -162,6 +177,9 @@ function lss_register_settings() {
     }
 
     $fields = [
+        'lss_section_general' => [
+            'exempted_roles' => __('Exempted Roles', 'login-security-squad'),
+        ],
         'lss_section_session' => [
             'concurrent_sessions_limit' => __('Max Concurrent Sessions', 'login-security-squad'),
             'force_logout' => __('Force Logout', 'login-security-squad'),
@@ -244,6 +262,9 @@ function lss_render_field($args) {
             break;
         default:
             echo '<input type="text" id="' . esc_attr($id) . '" name="lss_settings[' . esc_attr($id) . ']" value="' . esc_attr($value) . '" class="regular-text">';
+            if ($id === 'exempted_roles') {
+                echo '<p class="description">' . __('Enter a comma-separated list of user roles to exempt from all security checks (e.g., administrator, editor).', 'login-security-squad') . '</p>';
+            }
             break;
     }
 }

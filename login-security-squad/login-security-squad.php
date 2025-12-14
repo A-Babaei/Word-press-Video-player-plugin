@@ -16,6 +16,39 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
+ * Check if a user's role is exempt from security checks.
+ *
+ * @param int $user_id The ID of the user to check.
+ * @return bool True if the user's role is exempt, false otherwise.
+ */
+function lss_is_user_role_exempt($user_id) {
+    if (!$user_id) {
+        return false;
+    }
+
+    $user = get_userdata($user_id);
+    if (!$user) {
+        return false;
+    }
+
+    $options = get_option('lss_settings', []);
+    $exempted_roles_str = isset($options['exempted_roles']) ? $options['exempted_roles'] : '';
+
+    if (empty($exempted_roles_str)) {
+        return false;
+    }
+
+    $exempted_roles = array_map('trim', explode(',', $exempted_roles_str));
+    $user_roles = (array) $user->roles;
+
+    // Check for intersection between user's roles and exempted roles
+    $intersection = array_intersect($user_roles, $exempted_roles);
+
+    return !empty($intersection);
+}
+
+
+/**
  * Activate the plugin.
  */
 function lss_activate_plugin() {
@@ -79,6 +112,10 @@ register_deactivation_hook( __FILE__, 'lss_deactivate_plugin' );
  * @param WP_User $user       The WP_User object.
  */
 function lss_track_login( $user_login, $user ) {
+    if (lss_is_user_role_exempt($user->ID)) {
+        return;
+    }
+
     global $wpdb;
     $table_name = $wpdb->prefix . 'login_security_logs';
 
@@ -114,6 +151,10 @@ add_action( 'wp_login', 'lss_track_login', 10, 2 );
  */
 function lss_check_suspicious_activity_on_auth( $user, $username ) {
     if ( is_a( $user, 'WP_User' ) ) {
+        if (lss_is_user_role_exempt($user->ID)) {
+            return $user;
+        }
+
         $ip_address = lss_get_user_ip();
         $location_data   = lss_get_location_from_ip( $ip_address );
         $result = lss_check_suspicious_activity( $user->ID, $ip_address, $location_data );
@@ -380,6 +421,10 @@ function lss_prevent_blocked_login( $user, $username, $password ) {
     }
 
     if ( is_a( $user_obj, 'WP_User' ) ) {
+        if (lss_is_user_role_exempt($user_obj->ID)) {
+            return $user;
+        }
+
         if ( get_transient( 'lss_user_blocked_' . $user_obj->ID ) ) {
             return new WP_Error( 'lss_blocked', __( '<strong>ERROR</strong>: Your account has been temporarily suspended due to suspicious activity.', 'login-security-squad' ) );
         }
@@ -462,6 +507,10 @@ add_filter( 'authenticate', 'lss_verify_otp', 20, 2 );
  * @param WP_User $user       The WP_User object.
  */
 function lss_manage_concurrent_sessions( $user_login, $user ) {
+    if (lss_is_user_role_exempt($user->ID)) {
+        return;
+    }
+
     $session_limit = (int) get_option( 'lss_session_limit', 2 );
     $sessions      = WP_Session_Tokens::get_instance( $user->ID );
     $all_sessions  = $sessions->get_all();
@@ -545,6 +594,10 @@ add_action( 'wp_ajax_lss_update_fingerprint', 'lss_update_fingerprint' );
  */
 function lss_track_content_access() {
     if ( ! is_user_logged_in() || ! is_singular() ) {
+        return;
+    }
+
+    if (lss_is_user_role_exempt(get_current_user_id())) {
         return;
     }
 

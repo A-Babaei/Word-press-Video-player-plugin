@@ -33,6 +33,7 @@ Login Security Squad protects your content by monitoring user activity for signs
     *   **Settings Page:** A comprehensive settings page allows you to configure all of the plugin's features, including session limits, IP and device thresholds, and email templates.
     *   **Dashboard Widget:** A widget on the main WordPress dashboard shows you a list of all flagged accounts, so you can quickly see who might be sharing their account.
     *   **User Management:** You can warn, temporarily suspend, or permanently ban users directly from the WordPress users list or the plugin's dashboard.
+    *   **Exempt Roles:** You can specify certain user roles (e.g., "administrator", "editor") that should be exempt from all security checks, ensuring that trusted users are never accidentally locked out.
 
 ## How to Test the Plugin
 
@@ -81,6 +82,15 @@ Follow these steps to test the core features of the Login Security Squad plugin.
     *   **Expected Outcome:** The user should be logged out and unable to log in for one hour.
 4.  **Ban:** Click the "Ban" link.
     *   **Expected Outcome:** The user's account should be permanently blocked. They should not be able to log in with their old password, even if they try to log in with their email address. You can unblock them from the **Login Security** settings page.
+
+### Test 5: Exempted Roles
+
+1.  **Configure:** Go to **Login Security > Settings** and in the "Exempted Roles" field, enter `administrator`. Save the settings.
+2.  **Log Out and Log In:** Log out of your administrator account and then log back in.
+3.  **Attempt to Ban:** Go to the **Users** list and try to ban another administrator account.
+4.  **Expected Outcome:**
+    *   The administrator account should not be affected by any of the plugin's security checks.
+    *   You should see an error message when you try to ban another administrator, indicating that the user has an exempted role.
 
 ## Changelog
 
