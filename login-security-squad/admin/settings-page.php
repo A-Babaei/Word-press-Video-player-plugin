@@ -42,6 +42,7 @@ function lss_handle_manual_blocking() {
         delete_user_meta( $user_id, 'lss_permanently_blocked' );
         delete_user_meta( $user_id, 'lss_suspicion_count' );
         delete_user_meta( $user_id, 'lss_otp_failed_attempts' );
+        delete_transient( 'lss_user_blocked_' . $user_id );
         add_action( 'admin_notices', 'lss_manual_unblock_notice' );
     }
 }
@@ -447,23 +448,33 @@ function lss_render_settings_page() {
                     <th id="columnname" class="manage-column column-columnname" scope="col">User Agent</th>
                     <th id="columnname" class="manage-column column-columnname" scope="col">Login Time</th>
                     <th id="columnname" class="manage-column column-columnname" scope="col">Location</th>
+                    <th id="columnname" class="manage-column column-columnname" scope="col">Status</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ( ! empty( $logs ) ) : ?>
                     <?php foreach ( $logs as $log ) : ?>
-                        <?php $user = get_userdata( $log->user_id ); ?>
+                        <?php
+                        $user = get_userdata( $log->user_id );
+                        $status = 'Active';
+                        if ( get_transient( 'lss_user_blocked_' . $log->user_id ) ) {
+                            $status = 'Suspended';
+                        } elseif ( get_user_meta( $log->user_id, 'lss_permanently_blocked', true ) ) {
+                            $status = 'Banned';
+                        }
+                        ?>
                         <tr>
                             <td><?php echo esc_html( $user ? $user->user_login : 'N/A' ); ?></td>
                             <td><?php echo esc_html( lss_decrypt_data( $log->ip_address ) ); ?></td>
                             <td><?php echo esc_html( $log->user_agent ); ?></td>
                             <td><?php echo esc_html( $log->login_time ); ?></td>
                             <td><?php echo esc_html( $log->location ); ?></td>
+                            <td><?php echo esc_html( $status ); ?></td>
                         </tr>
                     <?php endforeach; ?>
                 <?php else : ?>
                     <tr>
-                        <td colspan="5">No login logs found.</td>
+                        <td colspan="6">No login logs found.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
