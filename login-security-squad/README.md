@@ -84,7 +84,7 @@ Follow these steps to test the core features of the Login Security Squad plugin.
 
 ## Changelog
 
-### 1.2 (2025-12-05)
+### 1.2 (2024-07-31)
 *   Fixed a bug that prevented admins from unblocking users who were locked out due to too many failed OTP attempts.
 *   Enhanced the admin UI by displaying usernames in the login logs and allowing admins to block users by username or user ID.
 * Fixed a fatal error on activation caused by a syntax error.

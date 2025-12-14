@@ -1,497 +1,390 @@
 <?php
-/**
- * Admin settings page for Login Security Squad.
- */
 
-if ( ! defined( 'ABSPATH' ) ) {
-    exit; // Exit if accessed directly.
+if (!defined('ABSPATH')) {
+    exit; // Exit if accessed directly
 }
 
 /**
- * Handle manual blocking/unblocking.
+ * Helper function to unban a user.
+ *
+ * @param int $user_id The ID of the user to unban.
+ */
+function lss_unban_user($user_id) {
+    delete_user_meta($user_id, '_lss_is_banned');
+    delete_user_meta($user_id, 'lss_permanently_blocked');
+    delete_transient('lss_temp_suspend_' . $user_id);
+    delete_user_meta($user_id, '_lss_login_attempts'); // Clear OTP failures
+
+    // Restore user role to default
+    wp_update_user(['ID' => $user_id, 'role' => get_option('default_role')]);
+
+    // Reset password and send notification
+    wp_send_new_user_notifications($user_id, 'both');
+}
+
+
+/**
+ * Handle manual user blocking from the settings page.
  */
 function lss_handle_manual_blocking() {
-    if ( ! isset( $_POST['lss_manual_block_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['lss_manual_block_nonce'] ) ), 'lss_manual_block_nonce' ) ) {
-        return;
-    }
+    if (isset($_POST['lss_manual_block_user_nonce']) && wp_verify_nonce($_POST['lss_manual_block_user_nonce'], 'lss_manual_block_user_action')) {
+        $user_identifier = sanitize_text_field($_POST['user_identifier']);
+        $action = sanitize_text_field($_POST['block_action']);
 
-    if ( ! current_user_can( 'manage_options' ) ) {
-        return;
-    }
-
-    $user_identifier = isset( $_POST['lss_user_identifier_to_block'] ) ? sanitize_text_field( wp_unslash( $_POST['lss_user_identifier_to_block'] ) ) : '';
-    $user = is_numeric( $user_identifier ) ? get_user_by( 'ID', $user_identifier ) : get_user_by( 'login', $user_identifier );
-
-    if ( ! $user ) {
-        return;
-    }
-    $user_id = $user->ID;
-
-    if ( isset( $_POST['lss_block_user'] ) ) {
-        update_user_meta( $user_id, 'lss_permanently_blocked', true );
-        wp_update_user(
-            array(
-                'ID'       => $user_id,
-                'user_pass' => wp_generate_password( 32 ), // Lock out the user.
-            )
-        );
-        add_action( 'admin_notices', 'lss_manual_block_notice' );
-    }
-
-    if ( isset( $_POST['lss_unblock_user'] ) ) {
-        delete_user_meta( $user_id, 'lss_permanently_blocked' );
-        delete_user_meta( $user_id, 'lss_suspicion_count' );
-        delete_user_meta( $user_id, 'lss_otp_failed_attempts' );
-        delete_transient( 'lss_user_blocked_' . $user_id );
-        add_action( 'admin_notices', 'lss_manual_unblock_notice' );
-    }
-}
-add_action( 'admin_init', 'lss_handle_manual_blocking' );
-
-/**
- * Display a notice when a user is manually blocked.
- */
-function lss_manual_block_notice() {
-    ?>
-    <div class="notice notice-success is-dismissible">
-        <p><?php esc_html_e( 'User blocked successfully.', 'login-security-squad' ); ?></p>
-    </div>
-    <?php
-}
-
-/**
- * Add a meta box to the post edit screen.
- */
-function lss_add_protected_content_meta_box() {
-    add_meta_box(
-        'lss_protected_content_meta_box',
-        'Protected Content',
-        'lss_render_protected_content_meta_box',
-        array( 'post', 'page' ),
-        'side',
-        'default'
-    );
-}
-add_action( 'add_meta_boxes', 'lss_add_protected_content_meta_box' );
-
-/**
- * Render the protected content meta box.
- *
- * @param WP_Post $post The post object.
- */
-function lss_render_protected_content_meta_box( $post ) {
-    wp_nonce_field( 'lss_save_protected_content_meta_box_data', 'lss_protected_content_meta_box_nonce' );
-    $value = get_post_meta( $post->ID, '_is_protected', true );
-    ?>
-    <label for="lss_is_protected">
-        <input type="checkbox" name="lss_is_protected" id="lss_is_protected" value="1" <?php checked( $value, 1 ); ?> />
-        <?php esc_html_e( 'Protect this content', 'login-security-squad' ); ?>
-    </label>
-    <?php
-}
-
-/**
- * Save the protected content meta box data.
- *
- * @param int $post_id The post ID.
- */
-function lss_save_protected_content_meta_box_data( $post_id ) {
-    if ( ! isset( $_POST['lss_protected_content_meta_box_nonce'] ) ) {
-        return;
-    }
-    if ( ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['lss_protected_content_meta_box_nonce'] ) ), 'lss_save_protected_content_meta_box_data' ) ) {
-        return;
-    }
-    if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
-        return;
-    }
-    if ( isset( $_POST['post_type'] ) && 'page' === $_POST['post_type'] ) {
-        if ( ! current_user_can( 'edit_page', $post_id ) ) {
+        if (empty($user_identifier)) {
+            add_settings_error('lss_messages', 'lss_error', __('Please enter a User ID or Username.', 'login-security-squad'), 'error');
             return;
         }
-    } else {
-        if ( ! current_user_can( 'edit_post', $post_id ) ) {
+
+        if (filter_var($user_identifier, FILTER_VALIDATE_INT)) {
+            $user = get_user_by('ID', $user_identifier);
+        } else {
+            $user = get_user_by('login', $user_identifier);
+        }
+
+        if (!$user) {
+            add_settings_error('lss_messages', 'lss_error', __('User not found.', 'login-security-squad'), 'error');
             return;
         }
-    }
-    if ( isset( $_POST['lss_is_protected'] ) ) {
-        update_post_meta( $post_id, '_is_protected', 1 );
-    } else {
-        delete_post_meta( $post_id, '_is_protected' );
-    }
-}
-add_action( 'save_post', 'lss_save_protected_content_meta_box_data' );
 
-/**
- * Handle the "Suspend User" action.
- */
-function lss_handle_suspend_user_action() {
-    if ( isset( $_GET['action'] ) && 'lss_suspend_user' === $_GET['action'] ) {
-        check_admin_referer( 'lss_suspend_user' );
-        $user_id = isset( $_GET['user'] ) ? absint( $_GET['user'] ) : 0;
-        if ( current_user_can( 'edit_user', $user_id ) ) {
-            set_transient( 'lss_user_blocked_' . $user_id, true, HOUR_IN_SECONDS );
-            add_action( 'admin_notices', 'lss_suspend_user_notice' );
+        if (current_user_can('edit_user', $user->ID) && get_current_user_id() !== $user->ID) {
+            if ($action === 'block') {
+                update_user_meta($user->ID, '_lss_is_banned', true);
+                wp_update_user(['ID' => $user->ID, 'role' => 'no-role']);
+                add_settings_error('lss_messages', 'lss_success', sprintf(__('User %s has been banned successfully.', 'login-security-squad'), esc_html($user->user_login)), 'updated');
+            } elseif ($action === 'unblock') {
+                lss_unban_user($user->ID);
+                add_settings_error('lss_messages', 'lss_success', sprintf(__('User %s has been unbanned. Their role has been restored and a password reset link has been sent to their email.', 'login-security-squad'), esc_html($user->user_login)), 'updated');
+            }
+        } else {
+            add_settings_error('lss_messages', 'lss_error', __('You do not have permission to modify this user.', 'login-security-squad'), 'error');
         }
     }
 }
-add_action( 'admin_init', 'lss_handle_suspend_user_action' );
+add_action('admin_init', 'lss_handle_manual_blocking');
+
 
 /**
- * Display a notice when a user is suspended.
+ * Handle user actions from the log table (ban/unban).
  */
-function lss_suspend_user_notice() {
-    ?>
-    <div class="notice notice-success is-dismissible">
-        <p><?php esc_html_e( 'User suspended successfully.', 'login-security-squad' ); ?></p>
-    </div>
-    <?php
-}
+function lss_handle_log_actions() {
+    if (isset($_GET['action'], $_GET['user_id'], $_GET['_wpnonce'])) {
+        $user_id = intval($_GET['user_id']);
+        $action = sanitize_key($_GET['action']);
+        $nonce = $_GET['_wpnonce'];
 
-/**
- * Handle the "Ban User" action.
- */
-function lss_handle_ban_user_action() {
-    if ( isset( $_GET['action'] ) && 'lss_ban_user' === $_GET['action'] ) {
-        check_admin_referer( 'lss_ban_user' );
-        $user_id = isset( $_GET['user'] ) ? absint( $_GET['user'] ) : 0;
-        if ( current_user_can( 'edit_user', $user_id ) ) {
-            update_user_meta( $user_id, 'lss_permanently_blocked', true );
-            wp_update_user(
-                array(
-                    'ID'       => $user_id,
-                    'user_pass' => wp_generate_password( 32 ), // Lock out the user.
-                )
-            );
-            add_action( 'admin_notices', 'lss_ban_user_notice' );
+        if (!wp_verify_nonce($nonce, 'lss_' . $action . '_user_' . $user_id)) {
+            wp_die(__('Security check failed.', 'login-security-squad'));
+        }
+
+        if (!current_user_can('edit_user', $user_id) || get_current_user_id() === $user_id) {
+            wp_die(__('You do not have permission to perform this action.', 'login-security-squad'));
+        }
+
+        $user = get_user_by('ID', $user_id);
+        if (!$user) {
+            wp_die(__('User not found.', 'login-security-squad'));
+        }
+
+        if ($action === 'ban_user') {
+            update_user_meta($user_id, '_lss_is_banned', true);
+            wp_update_user(['ID' => $user_id, 'role' => 'no-role']);
+            $redirect_url = add_query_arg('lss_message', 'user_banned', wp_get_referer());
+        } elseif ($action === 'unban_user') {
+            lss_unban_user($user_id);
+            $redirect_url = add_query_arg('lss_message', 'user_unbanned', wp_get_referer());
+        }
+
+        if (isset($redirect_url)) {
+            wp_safe_redirect($redirect_url);
+            exit;
         }
     }
 }
-add_action( 'admin_init', 'lss_handle_ban_user_action' );
+add_action('admin_init', 'lss_handle_log_actions');
 
 /**
- * Display a notice when a user is banned.
+ * Display admin notices for log actions.
  */
-function lss_ban_user_notice() {
-    ?>
-    <div class="notice notice-success is-dismissible">
-        <p><?php esc_html_e( 'User banned successfully.', 'login-security-squad' ); ?></p>
-    </div>
-    <?php
-}
-
-/**
- * Add a "Suspicion Score" column to the users table.
- *
- * @param array $columns The existing columns.
- * @return array The modified columns.
- */
-function lss_add_suspicion_score_column( $columns ) {
-    $columns['suspicion_score'] = 'Suspicion Score';
-    return $columns;
-}
-add_filter( 'manage_users_columns', 'lss_add_suspicion_score_column' );
-
-/**
- * Display the suspicion score in the custom column.
- *
- * @param string $value       The value to display.
- * @param string $column_name The name of the column.
- * @param int    $user_id     The user ID.
- * @return string The modified value.
- */
-function lss_display_suspicion_score( $value, $column_name, $user_id ) {
-    if ( 'suspicion_score' === $column_name ) {
-        return (int) get_user_meta( $user_id, 'lss_suspicion_count', true );
-    }
-    return $value;
-}
-add_filter( 'manage_users_custom_column', 'lss_display_suspicion_score', 10, 3 );
-
-/**
- * Add a "Warn User" action to the user row actions.
- *
- * @param array   $actions The existing actions.
- * @param WP_User $user    The user object.
- * @return array The modified actions.
- */
-function lss_add_user_row_actions( $actions, $user ) {
-    if ( current_user_can( 'edit_user', $user->ID ) ) {
-        $actions['warn_user'] = '<a href="' . esc_url( wp_nonce_url( admin_url( 'users.php?action=lss_warn_user&user=' . $user->ID ), 'lss_warn_user' ) ) . '">Warn</a>';
-        $actions['suspend_user'] = '<a href="' . esc_url( wp_nonce_url( admin_url( 'users.php?action=lss_suspend_user&user=' . $user->ID ), 'lss_suspend_user' ) ) . '">Suspend</a>';
-        $actions['ban_user'] = '<a href="' . esc_url( wp_nonce_url( admin_url( 'users.php?action=lss_ban_user&user=' . $user->ID ), 'lss_ban_user' ) ) . '">Ban</a>';
-    }
-    return $actions;
-}
-add_filter( 'user_row_actions', 'lss_add_user_row_actions', 10, 2 );
-
-/**
- * Handle the "Warn User" action.
- */
-function lss_handle_warn_user_action() {
-    if ( isset( $_GET['action'] ) && 'lss_warn_user' === $_GET['action'] ) {
-        check_admin_referer( 'lss_warn_user' );
-        $user_id = isset( $_GET['user'] ) ? absint( $_GET['user'] ) : 0;
-        if ( current_user_can( 'edit_user', $user_id ) ) {
-            $user    = get_userdata( $user_id );
-            $email   = $user->user_email;
-            $subject = get_option( 'lss_warn_email_subject', 'A Warning About Your Account' );
-            $message = get_option( 'lss_warn_email_body', 'We have detected suspicious activity on your account. Please be aware that account sharing is not permitted.' );
-            wp_mail( $email, $subject, $message );
-            add_action( 'admin_notices', 'lss_warn_user_notice' );
+function lss_display_log_action_notices() {
+    if (isset($_GET['lss_message'])) {
+        $message = '';
+        $type = 'success';
+        switch ($_GET['lss_message']) {
+            case 'user_banned':
+                $message = __('User has been banned successfully.', 'login-security-squad');
+                break;
+            case 'user_unbanned':
+                $message = __('User has been unbanned. Their role has been restored and a password reset link has been sent.', 'login-security-squad');
+                break;
+        }
+        if ($message) {
+            echo '<div class="notice notice-' . esc_attr($type) . ' is-dismissible"><p>' . esc_html($message) . '</p></div>';
         }
     }
 }
-add_action( 'admin_init', 'lss_handle_warn_user_action' );
+add_action('admin_notices', 'lss_display_log_action_notices');
 
-/**
- * Display a notice when a user is warned.
- */
-function lss_warn_user_notice() {
-    ?>
-    <div class="notice notice-success is-dismissible">
-        <p><?php esc_html_e( 'User warned successfully.', 'login-security-squad' ); ?></p>
-    </div>
-    <?php
-}
-
-/**
- * Add a dashboard widget to display flagged accounts.
- */
-function lss_add_dashboard_widget() {
-    wp_add_dashboard_widget(
-        'lss_flagged_accounts_widget',
-        'Flagged Accounts',
-        'lss_render_flagged_accounts_widget'
-    );
-}
-add_action( 'wp_dashboard_setup', 'lss_add_dashboard_widget' );
-
-/**
- * Render the flagged accounts dashboard widget.
- */
-function lss_render_flagged_accounts_widget() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'usermeta';
-    $flagged_users = $wpdb->get_results(
-        "SELECT user_id, meta_value FROM $table_name WHERE meta_key = 'lss_suspicion_count' AND meta_value > 0 ORDER BY meta_value DESC"
-    );
-
-    if ( ! empty( $flagged_users ) ) {
-        echo '<ul>';
-        foreach ( $flagged_users as $flagged_user ) {
-            $user = get_userdata( $flagged_user->user_id );
-            echo '<li>';
-            echo esc_html( $user->user_login ) . ' (' . esc_html( $flagged_user->meta_value ) . ' flags)';
-            echo ' <a href="' . esc_url( wp_nonce_url( admin_url( 'users.php?action=lss_warn_user&user=' . $user->ID ), 'lss_warn_user' ) ) . '">Warn</a>';
-            echo ' | <a href="' . esc_url( wp_nonce_url( admin_url( 'users.php?action=lss_suspend_user&user=' . $user->ID ), 'lss_suspend_user' ) ) . '">Suspend</a>';
-            echo ' | <a href="' . esc_url( wp_nonce_url( admin_url( 'users.php?action=lss_ban_user&user=' . $user->ID ), 'lss_ban_user' ) ) . '">Ban</a>';
-            echo '</li>';
-        }
-        echo '</ul>';
-    } else {
-        echo '<p>No flagged accounts.</p>';
-    }
-}
-
-/**
- * Display a notice when a user is manually unblocked.
- */
-function lss_manual_unblock_notice() {
-    ?>
-    <div class="notice notice-success is-dismissible">
-        <p><?php esc_html_e( 'User unblocked successfully.', 'login-security-squad' ); ?></p>
-    </div>
-    <?php
-}
 
 /**
  * Add the settings page to the admin menu.
  */
-function lss_add_settings_page() {
+function lss_add_admin_menu() {
     add_menu_page(
-        'Login Security Squad',
-        'Login Security',
+        __('Login Security Squad', 'login-security-squad'),
+        __('Login Security', 'login-security-squad'),
         'manage_options',
         'login-security-squad',
-        'lss_render_settings_page',
-        'dashicons-shield-alt'
-    );
-    add_submenu_page(
-        'login-security-squad',
-        'Anti-Sharing Settings',
-        'Anti-Sharing',
-        'manage_options',
-        'lss-anti-sharing',
-        'lss_render_anti_sharing_page'
+        'lss_settings_page_html',
+        'dashicons-shield-alt',
+        80
     );
 }
-add_action( 'admin_menu', 'lss_add_settings_page' );
+add_action('admin_menu', 'lss_add_admin_menu');
 
 /**
- * Register the settings.
+ * Register plugin settings.
  */
 function lss_register_settings() {
-    // Anti-sharing settings.
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_enable_anti_sharing' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_suspicion_email_subject' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_suspicion_email_body' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_warn_email_subject' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_warn_email_body' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_ip_threshold' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_distance_threshold' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_admin_email' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_session_limit' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_fingerprint_threshold' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_access_threshold' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_ip_grace_period' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_enable_geolocation' );
-    register_setting( 'lss_anti_sharing_settings_group', 'lss_enable_otp' );
+    register_setting('lss_settings_group', 'lss_settings', 'lss_settings_sanitize');
+
+    $sections = [
+        'lss_section_session' => __('Concurrent Session Management', 'login-security-squad'),
+        'lss_section_ip' => __('IP & Device Fingerprinting', 'login-security-squad'),
+        'lss_section_otp' => __('Email OTP Verification', 'login-security-squad'),
+        'lss_section_monitoring' => __('Usage Pattern Monitoring', 'login-security-squad'),
+        'lss_section_notifications' => __('Email Notifications', 'login-security-squad'),
+        'lss_section_manual_block' => __('Manual User Blocking', 'login-security-squad'),
+    ];
+
+    foreach ($sections as $id => $title) {
+        add_settings_section($id, $title, null, 'login-security-squad');
+    }
+
+    $fields = [
+        'lss_section_session' => [
+            'concurrent_sessions_limit' => __('Max Concurrent Sessions', 'login-security-squad'),
+            'force_logout' => __('Force Logout', 'login-security-squad'),
+        ],
+        'lss_section_ip' => [
+            'max_ips' => __('Max Unique IPs per 24h', 'login-security-squad'),
+            'enable_otp_ip_flag' => __('Require OTP on IP Flag', 'login-security-squad'),
+        ],
+        'lss_section_otp' => [
+            'otp_max_attempts' => __('OTP Max Attempts', 'login-security-squad'),
+            'otp_temp_lockout_duration' => __('OTP Temporary Lockout (minutes)', 'login-security-squad'),
+        ],
+        'lss_section_monitoring' => [
+            'content_access_limit' => __('Content Access Limit', 'login-security-squad'),
+            'content_access_window' => __('Content Access Time Window (minutes)', 'login-security-squad'),
+            'auto_suspend_on_flag' => __('Auto-suspend on Flag', 'login-security-squad'),
+        ],
+        'lss_section_notifications' => [
+            'admin_notification_email' => __('Admin Notification Email', 'login-security-squad'),
+            'email_subject_flagged' => __('Suspicious Activity Email Subject', 'login-security-squad'),
+            'email_body_flagged' => __('Suspicious Activity Email Body', 'login-security-squad'),
+            'email_subject_suspended' => __('Account Suspended Email Subject', 'login-security-squad'),
+            'email_body_suspended' => __('Account Suspended Email Body', 'login-security-squad'),
+            'email_subject_otp' => __('Email OTP Subject', 'login-security-squad'),
+            'email_body_otp' => __('Email OTP Body', 'login-security-squad'),
+        ]
+    ];
+
+    foreach ($fields as $section => $field_group) {
+        foreach ($field_group as $id => $title) {
+            add_settings_field(
+                $id,
+                $title,
+                'lss_render_field',
+                'login-security-squad',
+                $section,
+                ['id' => $id, 'label_for' => $id]
+            );
+        }
+    }
 }
-add_action( 'admin_init', 'lss_register_settings' );
+add_action('admin_init', 'lss_register_settings');
 
 /**
- * Render the anti-sharing settings page.
+ * Render a settings field.
+ *
+ * @param array $args Field arguments.
  */
-function lss_render_anti_sharing_page() {
-    ?>
-    <div class="wrap">
-        <h1>Anti-Sharing Settings</h1>
-        <form action="options.php" method="post">
-            <?php
-            settings_fields( 'lss_anti_sharing_settings_group' );
-            do_settings_sections( 'lss-anti-sharing' );
-            ?>
-            <table class="form-table">
-                <tr valign="top">
-                    <th scope="row">Enable Anti-Sharing Features</th>
-                    <td><input type="checkbox" name="lss_enable_anti_sharing" value="1" <?php checked( get_option( 'lss_enable_anti_sharing' ), 1 ); ?> /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Enable Geolocation Flagging</th>
-                    <td><input type="checkbox" name="lss_enable_geolocation" value="1" <?php checked( get_option( 'lss_enable_geolocation' ), 1 ); ?> /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Enable OTP Verification</th>
-                    <td><input type="checkbox" name="lss_enable_otp" value="1" <?php checked( get_option( 'lss_enable_otp' ), 1 ); ?> /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">IP Threshold</th>
-                    <td><input type="number" name="lss_ip_threshold" value="<?php echo esc_attr( get_option( 'lss_ip_threshold', 2 ) ); ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Distance Threshold (km)</th>
-                    <td><input type="number" name="lss_distance_threshold" value="<?php echo esc_attr( get_option( 'lss_distance_threshold', 1000 ) ); ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Admin Notification Email</th>
-                    <td><input type="email" name="lss_admin_email" value="<?php echo esc_attr( get_option( 'lss_admin_email', get_option( 'admin_email' ) ) ); ?>" /></td>
-                </tr>
-                 <tr valign="top">
-                    <th scope="row">Session Limit</th>
-                    <td><input type="number" name="lss_session_limit" value="<?php echo esc_attr( get_option( 'lss_session_limit', 2 ) ); ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Device Fingerprint Threshold</th>
-                    <td><input type="number" name="lss_fingerprint_threshold" value="<?php echo esc_attr( get_option( 'lss_fingerprint_threshold', 2 ) ); ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Content Access Threshold</th>
-                    <td><input type="number" name="lss_access_threshold" value="<?php echo esc_attr( get_option( 'lss_access_threshold', 3 ) ); ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">IP Grace Period (days)</th>
-                    <td><input type="number" name="lss_ip_grace_period" value="<?php echo esc_attr( get_option( 'lss_ip_grace_period', 7 ) ); ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Suspicion Email Subject</th>
-                    <td><input type="text" name="lss_suspicion_email_subject" value="<?php echo esc_attr( get_option( 'lss_suspicion_email_subject', 'Suspicious Login Activity Detected' ) ); ?>" class="regular-text" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Suspicion Email Body</th>
-                    <td><textarea name="lss_suspicion_email_body" rows="10" cols="50" class="large-text"><?php echo esc_textarea( get_option( 'lss_suspicion_email_body', "Suspicious login activity was detected for your account.\n\nPlease verify your account to continue." ) ); ?></textarea></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">"Warn User" Email Subject</th>
-                    <td><input type="text" name="lss_warn_email_subject" value="<?php echo esc_attr( get_option( 'lss_warn_email_subject', 'A Warning About Your Account' ) ); ?>" class="regular-text" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">"Warn User" Email Body</th>
-                    <td><textarea name="lss_warn_email_body" rows="10" cols="50" class="large-text"><?php echo esc_textarea( get_option( 'lss_warn_email_body', 'We have detected suspicious activity on your account. Please be aware that account sharing is not permitted.' ) ); ?></textarea></td>
-                </tr>
-            </table>
-            <?php submit_button(); ?>
-        </form>
-    </div>
-    <?php
+function lss_render_field($args) {
+    $options = get_option('lss_settings');
+    $id = $args['id'];
+    $value = isset($options[$id]) ? $options[$id] : '';
+
+    switch ($id) {
+        case 'force_logout':
+        case 'enable_otp_ip_flag':
+        case 'auto_suspend_on_flag':
+            echo '<input type="checkbox" id="' . esc_attr($id) . '" name="lss_settings[' . esc_attr($id) . ']" value="1"' . checked(1, $value, false) . '>';
+            break;
+        case 'email_body_flagged':
+        case 'email_body_suspended':
+        case 'email_body_otp':
+             wp_editor(
+                $value,
+                esc_attr($id),
+                [
+                    'textarea_name' => 'lss_settings[' . esc_attr($id) . ']',
+                    'textarea_rows' => 10,
+                ]
+            );
+            echo '<p class="description">' . __('Available placeholders: {username}, {display_name}, {otp_code}, {ip_address}', 'login-security-squad') . '</p>';
+            break;
+        case 'concurrent_sessions_limit':
+        case 'max_ips':
+        case 'content_access_limit':
+        case 'content_access_window':
+        case 'otp_max_attempts':
+        case 'otp_temp_lockout_duration':
+            echo '<input type="number" id="' . esc_attr($id) . '" name="lss_settings[' . esc_attr($id) . ']" value="' . esc_attr($value) . '" min="1" class="small-text">';
+            break;
+        default:
+            echo '<input type="text" id="' . esc_attr($id) . '" name="lss_settings[' . esc_attr($id) . ']" value="' . esc_attr($value) . '" class="regular-text">';
+            break;
+    }
 }
 
 /**
- * Render the settings page.
+ * Sanitize settings values.
+ *
+ * @param array $input The input array.
+ * @return array The sanitized array.
  */
-function lss_render_settings_page() {
+function lss_settings_sanitize($input) {
+    $sanitized_input = [];
+    $options = get_option('lss_settings');
+
+    if (empty($input)) {
+        return $options;
+    }
+
+    foreach ($input as $key => $value) {
+        switch ($key) {
+            case 'concurrent_sessions_limit':
+            case 'max_ips':
+            case 'content_access_limit':
+            case 'content_access_window':
+            case 'otp_max_attempts':
+            case 'otp_temp_lockout_duration':
+                $sanitized_input[$key] = absint($value);
+                break;
+            case 'force_logout':
+            case 'enable_otp_ip_flag':
+            case 'auto_suspend_on_flag':
+                $sanitized_input[$key] = ($value == '1' ? 1 : 0);
+                break;
+            case 'admin_notification_email':
+                $sanitized_input[$key] = sanitize_email($value);
+                break;
+            case 'email_body_flagged':
+            case 'email_body_suspended':
+            case 'email_body_otp':
+                $sanitized_input[$key] = wp_kses_post($value);
+                break;
+            default:
+                $sanitized_input[$key] = sanitize_text_field($value);
+                break;
+        }
+    }
+
+    return $sanitized_input;
+}
+
+
+/**
+ * Render the main settings page HTML.
+ */
+function lss_settings_page_html() {
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+
+    // Manual block form handling
+    lss_handle_manual_blocking();
+
+    // Display any settings errors
+    settings_errors('lss_messages');
     ?>
     <div class="wrap">
-        <h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
+        <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
-        <h2>Login Logs</h2>
-        <?php
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'login_security_logs';
-        $logs       = $wpdb->get_results( "SELECT * FROM $table_name ORDER BY login_time DESC LIMIT 100" );
-        ?>
-        <table class="widefat fixed" cellspacing="0">
-            <thead>
-                <tr>
-                    <th id="columnname" class="manage-column column-columnname" scope="col">Username</th>
-                    <th id="columnname" class="manage-column column-columnname" scope="col">IP Address</th>
-                    <th id="columnname" class="manage-column column-columnname" scope="col">User Agent</th>
-                    <th id="columnname" class="manage-column column-columnname" scope="col">Login Time</th>
-                    <th id="columnname" class="manage-column column-columnname" scope="col">Location</th>
-                    <th id="columnname" class="manage-column column-columnname" scope="col">Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if ( ! empty( $logs ) ) : ?>
-                    <?php foreach ( $logs as $log ) : ?>
-                        <?php
-                        $user = get_userdata( $log->user_id );
-                        $status = 'Active';
-                        if ( get_transient( 'lss_user_blocked_' . $log->user_id ) ) {
-                            $status = 'Suspended';
-                        } elseif ( get_user_meta( $log->user_id, 'lss_permanently_blocked', true ) ) {
-                            $status = 'Banned';
-                        }
-                        ?>
-                        <tr>
-                            <td><?php echo esc_html( $user ? $user->user_login : 'N/A' ); ?></td>
-                            <td><?php echo esc_html( lss_decrypt_data( $log->ip_address ) ); ?></td>
-                            <td><?php echo esc_html( $log->user_agent ); ?></td>
-                            <td><?php echo esc_html( $log->login_time ); ?></td>
-                            <td><?php echo esc_html( $log->location ); ?></td>
-                            <td><?php echo esc_html( $status ); ?></td>
+        <h2 class="nav-tab-wrapper">
+            <a href="#settings" class="nav-tab nav-tab-active"><?php _e('Settings', 'login-security-squad'); ?></a>
+            <a href="#logs" class="nav-tab"><?php _e('Activity Logs', 'login-security-squad'); ?></a>
+        </h2>
+
+        <div id="settings" class="tab-content">
+            <form action="options.php" method="post">
+                <?php
+                settings_fields('lss_settings_group');
+                do_settings_sections('login-security-squad');
+                submit_button(__('Save Settings', 'login-security-squad'));
+                ?>
+            </form>
+             <!-- Manual Block Form -->
+            <div id="lss_manual_block_form" class="card">
+                <h2><?php _e('Manual User Actions', 'login-security-squad'); ?></h2>
+                <p><?php _e('Manually ban or unban a user by their User ID or Username.', 'login-security-squad'); ?></p>
+                <form method="post" action="">
+                    <?php wp_nonce_field('lss_manual_block_user_action', 'lss_manual_block_user_nonce'); ?>
+                    <table class="form-table">
+                        <tr valign="top">
+                            <th scope="row">
+                                <label for="user_identifier"><?php _e('User ID or Username', 'login-security-squad'); ?></label>
+                            </th>
+                            <td>
+                                <input type="text" id="user_identifier" name="user_identifier" class="regular-text" required />
+                            </td>
                         </tr>
-                    <?php endforeach; ?>
-                <?php else : ?>
-                    <tr>
-                        <td colspan="6">No login logs found.</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
+                        <tr valign="top">
+                            <th scope="row">
+                                <label for="block_action"><?php _e('Action', 'login-security-squad'); ?></label>
+                            </th>
+                            <td>
+                                <select id="block_action" name="block_action">
+                                    <option value="block"><?php _e('Ban', 'login-security-squad'); ?></option>
+                                    <option value="unblock"><?php _e('Unban', 'login-security-squad'); ?></option>
+                                </select>
+                            </td>
+                        </tr>
+                    </table>
+                    <?php submit_button(__('Apply Action', 'login-security-squad'), 'primary', 'lss_manual_block_submit'); ?>
+                </form>
+            </div>
+        </div>
 
-        <h2>Manual Blocking</h2>
-        <form action="" method="post">
-            <?php wp_nonce_field( 'lss_manual_block_nonce' ); ?>
-            <table class="form-table">
-                <tr valign="top">
-                    <th scope="row">User ID or Username</th>
-                    <td><input type="text" name="lss_user_identifier_to_block" /></td>
-                </tr>
-            </table>
-            <input type="submit" name="lss_block_user" class="button button-primary" value="Block User" />
-            <input type="submit" name="lss_unblock_user" class="button" value="Unblock User" />
-        </form>
+        <div id="logs" class="tab-content" style="display:none;">
+            <h2><?php _e('User Login & Security Logs', 'login-security-squad'); ?></h2>
+            <?php
+            require_once plugin_dir_path(__FILE__) . '../includes/class-lss-logs-list-table.php';
+            $log_table = new LSS_Logs_List_Table();
+            $log_table->prepare_items();
+            $log_table->display();
+            ?>
+        </div>
+
     </div>
+    <script>
+    jQuery(document).ready(function($) {
+        // Simple tabs
+        $('.nav-tab-wrapper a').on('click', function(e) {
+            e.preventDefault();
+            var target = $(this).attr('href');
+            $('.nav-tab').removeClass('nav-tab-active');
+            $(this).addClass('nav-tab-active');
+            $('.tab-content').hide();
+            $(target).show();
+        });
+
+        // Handle hash in URL for active tab
+        if(window.location.hash) {
+            $('.nav-tab-wrapper a[href="' + window.location.hash + '"]').click();
+        }
+    });
+    </script>
     <?php
 }
